@@ -775,7 +775,49 @@ jobs:
         shell: pwsh
         run: |
           $Env:RUSTFLAGS="-Zsanitizer=address"
-          cargo +nightly test --target x86_64-pc-windows-msvc -p win-api-wrappers
+          cargo +nightly test --target x86_64-pc-windows-msvc -p win-api-wrappers -p devolutions-pedm
+
+  winapi-miri:
+    name: Windows API miri tests
+    runs-on: windows-2022
+    needs: preflight
+
+    steps:
+      - name: Checkout ${{ github.repository }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Prepare runner
+        shell: pwsh
+        run: |
+          $VSInstallationPath = $(vswhere.exe -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+          Write-Host "VCToolsInstallDir = $VSInstallationPath"
+          Get-ChildItem "$VSInstallationPath"
+
+          $toolsPath = "$VSInstallationPath\VC\Tools\MSVC"
+          Write-Host "toolsPath = $toolsPath"
+          Get-ChildItem "$toolsPath"
+
+          $firstItem = Get-ChildItem "$toolsPath" | Select-Object -Last 1
+          $binPath = "$toolsPath\$($firstItem.Name)\bin\Hostx64\x64"
+          Write-Host "binPath = $binPath"
+          Get-ChildItem "$binPath"
+
+          $asanDllPath = "$binPath\clang_rt.asan_dynamic-x86_64.dll"
+          Write-Host "asanDllPath = $asanDllPath"
+
+          New-Item -ItemType Directory ".\target\x86_64-pc-windows-msvc\debug\"
+          Copy-Item -Path "$asanDllPath" -Destination .\target\x86_64-pc-windows-msvc\debug\
+
+          rustup toolchain install nightly
+          rustup +nightly component add miri
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          $Env:RUSTFLAGS="-Zsanitizer=address"
+          cargo +nightly test --target x86_64-pc-windows-msvc -p win-api-wrappers -p devolutions-pedm
 
   success:
     name: Success
