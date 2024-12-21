@@ -1,4 +1,10 @@
-pub use widestring::*;
+//! Utility module providing types for manipulating wide strings.
+
+// Re-export relevant items from the widestring crate.
+pub use widestring::{
+    decode_utf16, decode_utf16_lossy, encode_utf16, include_utf16str, u16cstr, u16str, utf16str, U16CStr, U16CString,
+    U16Str, U16String, Utf16Str, Utf16String,
+};
 
 #[cfg(target_os = "windows")]
 pub use self::win_ext::*;
@@ -8,6 +14,7 @@ mod win_ext {
     use super::{U16CStr, U16CString};
 
     use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::UNICODE_STRING;
 
     pub trait U16CStrExt {
         unsafe fn from_pwstr<'a>(ptr: PWSTR) -> &'a mut U16CStr;
@@ -51,6 +58,74 @@ mod win_ext {
 
         fn as_pcwstr(&self) -> PCWSTR {
             PCWSTR(self.as_ptr())
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, thiserror::Error)]
+    #[error("string too big")]
+    pub struct StringTooBigErr;
+
+    /// Guards mutable accesses to a U16CStr as a UNICODE_STRING.
+    pub struct UnicodeStrMut<'a> {
+        inner: UNICODE_STRING,
+        _marker: core::marker::PhantomData<&'a mut U16CStr>,
+    }
+
+    impl<'a> UnicodeStrMut<'a> {
+        pub fn new(s: &'a mut U16CStr) -> Result<UnicodeStrMut<'a>, StringTooBigErr> {
+            // U16CStr strings are null-terminated.
+            // Since UNICODE_STRING::Length must not include the null terminator, we decrement by one.
+            let length = u16::try_from(s.as_slice_with_nul().len()).map_err(|_| StringTooBigErr)? - 1;
+
+            let buffer = s.as_pwstr();
+
+            Ok(UnicodeStrMut {
+                inner: UNICODE_STRING {
+                    Length: length,
+                    MaximumLength: length,
+                    Buffer: buffer,
+                },
+                _marker: std::marker::PhantomData,
+            })
+        }
+
+        /// Returns a UNICODE_STRING structure which may be mutated.
+        pub fn as_unicode_string(&mut self) -> UNICODE_STRING {
+            self.inner
+        }
+    }
+
+    /// Guards shared accesses to a U16CStr as a UNICODE_STRING.
+    ///
+    /// The inner UNICODE_STRING is holding a PWSTR, but the underlying pointer origins from a const
+    /// pointer that must not be mutated.
+    pub struct UnicodeStr<'a> {
+        inner: UNICODE_STRING,
+        _marker: core::marker::PhantomData<&'a U16CStr>,
+    }
+
+    impl<'a> UnicodeStr<'a> {
+        pub fn new(s: &'a U16CStr) -> Result<UnicodeStr<'a>, StringTooBigErr> {
+            // U16CStr strings are null-terminated.
+            // Since UNICODE_STRING::Length must not include the null terminator, we decrement by one.
+            let length = u16::try_from(s.as_slice_with_nul().len()).map_err(|_| StringTooBigErr)? - 1;
+
+            let pcwstr = s.as_pcwstr();
+            let buffer = PWSTR(pcwstr.0.cast_mut());
+
+            Ok(UnicodeStr {
+                inner: UNICODE_STRING {
+                    Length: length,
+                    MaximumLength: length,
+                    Buffer: buffer,
+                },
+                _marker: std::marker::PhantomData,
+            })
+        }
+
+        /// Returns a UNICODE_STRING structure that must not be mutated.
+        pub fn as_unicode_string(&self) -> UNICODE_STRING {
+            self.inner
         }
     }
 }
